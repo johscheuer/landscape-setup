@@ -33,7 +33,9 @@ if [ $# -gt 1 ] && [ $2 == "-u" -o $2 == "--uninstall" ]; then # uninstall certm
             ((pos=$pos+1)) # add 1 to position of apiserver line to compute patch position
         fi
         # patch line '--oidc-ca-file=/etc/kubernetes/secrets/ca.crt' into kube-apiserver again
+        $COMPONENT_TEMPLATE_HOME/prepare_apiserver_patch.sh 
         kubectl -n kube-system patch ds kube-apiserver --type json -p='[{"op": "add", "path": "/spec/template/spec/containers/0/command/'$pos'", "value": "--oidc-ca-file=/etc/kubernetes/secrets/ca.crt"}]'
+        $COMPONENT_TEMPLATE_HOME/prepare_apiserver_patch.sh undo
     fi
 
     # patch dashboard and ingress 
@@ -94,15 +96,6 @@ else
             -p="$(cat ${COMPONENT_TEMPLATE_HOME}/issuer-patch.yaml)"
     fi
 
-    # find position of the line '--oidc-ca-file=/etc/kubernetes/secrets/ca.crt' and save the array position of that entry within the yaml to variable
-    pos=$(kubectl -n kube-system get -o template ds kube-apiserver --template='{{range $i, $elem := (index .spec.template.spec.containers 0).command}}{{if eq $elem "--oidc-ca-file=/etc/kubernetes/secrets/ca.crt"}}{{$i}}{{end}}{{end}}')
-    if [ $pos ]; then
-        # delete that entry
-        kubectl -n kube-system patch ds kube-apiserver --type json -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/command/'$pos'"}]'
-    else
-        echo "INFO: Line '--oidc-ca-file=/etc/kubernetes/secrets/ca.crt' not found in daemonset kube-apiserver."
-    fi
-
     # wait until secrets have been recreated
     max_retry_time=300
     retry_stop=$(($(date +%s) + max_retry_time))
@@ -117,5 +110,16 @@ else
     done
     if ! $success; then
         fail "Secrets gardener-dashboard-tls and identity-tls not created within $max_retry_time seconds!"
+    fi
+
+    # find position of the line '--oidc-ca-file=/etc/kubernetes/secrets/ca.crt' and save the array position of that entry within the yaml to variable
+    pos=$(kubectl -n kube-system get -o template ds kube-apiserver --template='{{range $i, $elem := (index .spec.template.spec.containers 0).command}}{{if eq $elem "--oidc-ca-file=/etc/kubernetes/secrets/ca.crt"}}{{$i}}{{end}}{{end}}')
+    if [ $pos ]; then
+        # delete that entry
+        $COMPONENT_TEMPLATE_HOME/prepare_apiserver_patch.sh 
+        kubectl -n kube-system patch ds kube-apiserver --type json -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/command/'$pos'"}]'
+        $COMPONENT_TEMPLATE_HOME/prepare_apiserver_patch.sh undo
+    else
+        echo "INFO: Line '--oidc-ca-file=/etc/kubernetes/secrets/ca.crt' not found in daemonset kube-apiserver."
     fi
 fi
